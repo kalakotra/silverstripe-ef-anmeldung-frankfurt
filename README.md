@@ -65,22 +65,26 @@ Not filled on purpose: Tagesstempel and "Meldebehörde – Ort, Datum, Stempel, 
   `Form::resolveFieldLabel()/resolveStepTitle()` read the preview labels from the field titles.
 - **Replacement font** – auto-sized fields of this PDF lose ä/ö/ü/ž/ć in pdftk's appearance generation.
   The module passes `fonts/LiberationSans-Regular.ttf` (SIL OFL 1.1) as pdftk `replacement_font`;
-  pdftk builds without that option fall back to a plain fill (warning in the log).
+  pdftk builds without that option fall back to a plain fill with values transliterated to ASCII
+  (ä → ae, ß → ss, ć → c, đ → d …; warning in the log) – without the font pdftk drops even ä/ö/ü in auto-sized fields.
   Config: `Submission.replacement_font` (module-relative or absolute path, `''` disables).
 - **Fixed-size lines** – "PLZ, Ortsteil" (new residence) and the first line of "Bisherige Wohnung" have a fixed
   12 pt font and clip; a long Ortsteil / foreign address moves to the (auto-sized) second line.
 
 ## Signature
 
-Stamped with FPDI on pages 3, 4 and 5 (mm from the top-left corner):
+Stamped with FPDI on the Meldeschein, the Beiblatt and the applicant's copy (mm from the top-left corner).
+Negative page numbers count from the end, so a PDF without the two explanation pages works too:
 
 ```yaml
 Kalakotra\EFormAnmeldungFrankfurt\Model\Submission:
   signature_positions:
-    page3: { x: 135.0, y: 273.0, width: 36.0 }
-    page4: { x: 134.0, y: 231.5, width: 44.0 }
-    page5: { x: 135.0, y: 273.0, width: 36.0 }
+    meldeschein: { page: -3, x: 135.0, y: 273.0, width: 36.0 }
+    beiblatt: { page: -2, x: 134.0, y: 231.5, width: 44.0 }
+    copy: { page: -1, x: 135.0, y: 273.0, width: 36.0 }
 ```
+
+`PDFMultiFormPage.SignaturePositionX/Y` override x/y of `meldeschein` and `copy` (same layout).
 
 ## Translations
 

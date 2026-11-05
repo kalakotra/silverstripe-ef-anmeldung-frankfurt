@@ -692,15 +692,16 @@ class Submission extends BaseSubmission
     ];
 
     /**
-     * Signature per page ("page<N>", string keys survive the config merge) in mm from the top-left corner (3 = Meldeschein, 4 = Beiblatt, 5 = Ausfertigung
-     * für die meldepflichtige Person). PDFMultiFormPage.SignaturePositionX/Y override x/y on pages 3 and 5.
+     * Signatures in mm from the top-left corner. Negative page = counted from the end, so the positions stay
+     * correct when the CMS PDF omits the two explanation pages. PDFMultiFormPage.SignaturePositionX/Y override
+     * x/y of the Meldeschein and its copy (same layout).
      *
-     * @var array<int, array{x: float, y: float, width: float}>
+     * @var array<string, array{page: int, x: float, y: float, width: float}>
      */
     private static array $signature_positions = [
-        'page3' => ['x' => 135.0, 'y' => 273.0, 'width' => 36.0],
-        'page4' => ['x' => 134.0, 'y' => 231.5, 'width' => 44.0],
-        'page5' => ['x' => 135.0, 'y' => 273.0, 'width' => 36.0],
+        'meldeschein' => ['page' => -3, 'x' => 135.0, 'y' => 273.0, 'width' => 36.0],
+        'beiblatt' => ['page' => -2, 'x' => 134.0, 'y' => 231.5, 'width' => 44.0],
+        'copy' => ['page' => -1, 'x' => 135.0, 'y' => 273.0, 'width' => 36.0],
     ];
 
     /**
@@ -709,8 +710,19 @@ class Submission extends BaseSubmission
      */
     private static string $replacement_font = 'fonts/LiberationSans-Regular.ttf';
 
-    /** Pages whose signature position follows the CMS override (same layout). */
-    private const CMS_POSITION_PAGES = [3, 5];
+    /** Signature purposes whose position follows the CMS override (same layout). */
+    private const CMS_POSITION_KEYS = ['meldeschein', 'copy'];
+
+    /**
+     * Fallback when pdftk cannot use the replacement font: pdftk then drops every non-ASCII character in the
+     * auto-sized fields of this PDF (even ä/ö/ü), so values are transliterated to ASCII (German rules first,
+     * remaining diacritics stripped via Normalizer).
+     */
+    private const TRANSLITERATION = [
+        'ä' => 'ae', 'ö' => 'oe', 'ü' => 'ue', 'Ä' => 'Ae', 'Ö' => 'Oe', 'Ü' => 'Ue', 'ß' => 'ss',
+        'đ' => 'd', 'Đ' => 'D', 'ł' => 'l', 'Ł' => 'L', 'ı' => 'i', 'ø' => 'o', 'Ø' => 'O', 'æ' => 'ae', 'Æ' => 'Ae',
+        'œ' => 'oe', 'Œ' => 'Oe', '„' => '"', '“' => '"', '”' => '"', '‚' => "'", '‘' => "'", '’' => "'", '–' => '-', '—' => '-',
+    ];
 
     /** Characters that fit the fixed-size first line of the new residence ("Text6", 40 mm at 12 pt). */
     private const NEW_PLACE_LINE_MAX = 16;
@@ -937,7 +949,7 @@ class Submission extends BaseSubmission
         $error = $pdf->getError();
         if ($font !== null) {
             Injector::inst()->get(LoggerInterface::class)->warning(
-                'Anmeldung Frankfurt: pdftk fill with replacement_font failed, retrying without: ' . $error
+                'Anmeldung Frankfurt: pdftk fill with replacement_font failed, retrying with ASCII transliteration: ' . $error
             );
             $pdf = $this->newFilledPdf($basePdfPath, null);
             if ($pdf->saveAs($target)) {
@@ -951,8 +963,16 @@ class Submission extends BaseSubmission
 
     private function newFilledPdf(string $basePdfPath, ?string $font): Pdf
     {
+        $data = $this->getArrayDataForPDF();
+        if ($font === null) {
+            $data = array_map(
+                fn ($value) => is_string($value) ? $this->toAscii($value) : $value,
+                $data
+            );
+        }
+
         $pdf = new Pdf($basePdfPath);
-        $pdf->fillForm($this->getArrayDataForPDF())
+        $pdf->fillForm($data)
             ->needAppearances();
 
         if ($font !== null) {
@@ -960,6 +980,17 @@ class Submission extends BaseSubmission
         }
 
         return $pdf->flatten();
+    }
+
+    private function toAscii(string $value): string
+    {
+        $value = strtr($value, self::TRANSLITERATION);
+
+        if (class_exists(\Normalizer::class)) {
+            $value = (string) preg_replace('/\p{Mn}+/u', '', (string) \Normalizer::normalize($value, \Normalizer::FORM_D));
+        }
+
+        return (string) preg_replace('/[^\x20-\x7E]/', '', $value);
     }
 
     /** Config replacement_font: absolute path or relative to the module root; empty disables it. */
@@ -981,7 +1012,6 @@ class Submission extends BaseSubmission
      */
     private function stampSignature(string $sourcePdf, string $signaturePng): string
     {
-        $positions = (array) $this->config()->get('signature_positions');
         $holder = $this->getMyHolderPage();
         $overrideX = (float) ($holder?->SignaturePositionX ?: 0);
         $overrideY = (float) ($holder?->SignaturePositionY ?: 0);
@@ -990,6 +1020,27 @@ class Submission extends BaseSubmission
         $fpdi->SetAutoPageBreak(false);
         $pageCount = $fpdi->setSourceFile($sourcePdf);
 
+        // page number => positions to stamp
+        $stamps = [];
+        foreach ((array) $this->config()->get('signature_positions') as $key => $position) {
+            if (!is_array($position) || !isset($position['page'])) {
+                continue;
+            }
+
+            $page = (int) $position['page'];
+            $page = $page < 0 ? $pageCount + $page + 1 : $page;
+            if ($page < 1 || $page > $pageCount) {
+                continue;
+            }
+
+            if (in_array($key, self::CMS_POSITION_KEYS, true)) {
+                $position['x'] = $overrideX > 0 ? $overrideX : $position['x'];
+                $position['y'] = $overrideY > 0 ? $overrideY : $position['y'];
+            }
+
+            $stamps[$page][] = $position;
+        }
+
         for ($i = 1; $i <= $pageCount; $i++) {
             $template = $fpdi->importPage($i);
             $size = $fpdi->getTemplateSize($template);
@@ -997,19 +1048,9 @@ class Submission extends BaseSubmission
             $fpdi->AddPage($size['orientation'], [$size['width'], $size['height']]);
             $fpdi->useTemplate($template, 0, 0, $size['width'], $size['height']);
 
-            $position = $positions['page' . $i] ?? null;
-            if (!is_array($position)) {
-                continue;
+            foreach ($stamps[$i] ?? [] as $position) {
+                $fpdi->Image($signaturePng, (float) $position['x'], (float) $position['y'], (float) $position['width'], 0, 'PNG');
             }
-
-            $x = (float) $position['x'];
-            $y = (float) $position['y'];
-            if (in_array($i, self::CMS_POSITION_PAGES, true)) {
-                $x = $overrideX > 0 ? $overrideX : $x;
-                $y = $overrideY > 0 ? $overrideY : $y;
-            }
-
-            $fpdi->Image($signaturePng, $x, $y, (float) $position['width'], 0, 'PNG');
         }
 
         $outputPath = sys_get_temp_dir() . '/anmeldung_ffm_signed_' . uniqid('', true) . '.pdf';

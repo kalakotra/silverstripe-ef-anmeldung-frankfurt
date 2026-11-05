@@ -1,13 +1,13 @@
 ---
 Name: eform-anmeldung-frankfurt
 ---
-# Signature positions in mm from the top-left corner of each page.
-# Page 3 = Meldeschein (Ausfertigung für die Meldebehörde), page 4 = Beiblatt,
-# page 5 = Ausfertigung für die meldepflichtige Person.
-# PDFMultiFormPage.SignaturePositionX / SignaturePositionY in the CMS override x/y of pages 3 and 5.
+# Signatures in mm from the top-left corner; negative page = counted from the end
+# (-3 Meldeschein, -2 Beiblatt, -1 Ausfertigung für die meldepflichtige Person), so the positions also fit a
+# PDF without the two explanation pages. PDFMultiFormPage.SignaturePositionX/Y override "meldeschein" and "copy".
 #
 # Kalakotra\EFormAnmeldungFrankfurt\Model\Submission:
 #   signature_positions:
-#     page3: { x: 135.0, y: 273.0, width: 36.0 }
-#     page4: { x: 134.0, y: 231.5, width: 44.0 }
-#     page5: { x: 135.0, y: 273.0, width: 36.0 }
+#     meldeschein: { page: -3, x: 135.0, y: 273.0, width: 36.0 }
+#     beiblatt: { page: -2, x: 134.0, y: 231.5, width: 44.0 }
+#     copy: { page: -1, x: 135.0, y: 273.0, width: 36.0 }
+#   replacement_font: 'fonts/LiberationSans-Regular.ttf'   # '' = disabled (then values are transliterated to ASCII)
